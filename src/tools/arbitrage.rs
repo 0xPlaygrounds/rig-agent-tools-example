@@ -4,6 +4,7 @@ use rig::{
     completion::ToolDefinition,
     tool::Tool,
 };
+use prettytable::{Table, row, cell}; // Import prettytable
 use crate::{
     client::{GeckoClient, GeckoResponse, Pool},
     error::GeckoError,
@@ -37,6 +38,50 @@ impl ArbitrageTool {
         Self {
             client: GeckoClient::new(),
         }
+    }
+
+    /// Finds the top 3 arbitrage opportunities based on potential profit percentage.
+    fn find_top_arbitrage_opportunities(
+        &self,
+        mut opportunities: Vec<ArbitrageOpportunity>,
+    ) -> Vec<ArbitrageOpportunity> {
+        opportunities.sort_by(|a, b| {
+            b.potential_profit_percentage
+                .partial_cmp(&a.potential_profit_percentage)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        opportunities.into_iter().take(3).collect()
+    }
+
+    /// Formats the opportunities as a table for better readability.
+    fn format_as_table(&self, opportunities: Vec<ArbitrageOpportunity>) -> String {
+        let mut table = Table::new();
+        table.add_row(row![
+            "Pool 1 Name",
+            "Pool 1 Address",
+            "Pool 2 Name",
+            "Pool 2 Address",
+            "Pool 1 Price",
+            "Pool 2 Price",
+            "Difference (%)",
+            "Profit (%)"
+        ]);
+
+        for opportunity in opportunities {
+            table.add_row(row![
+                opportunity.pool1_name,
+                opportunity.pool1_address,
+                opportunity.pool2_name,
+                opportunity.pool2_address,
+                format!("{:.2}", opportunity.pool1_price),
+                format!("{:.2}", opportunity.pool2_price),
+                format!("{:.2}", opportunity.difference_percentage),
+                format!("{:.2}", opportunity.potential_profit_percentage)
+            ]);
+        }
+
+        table.to_string()
     }
 }
 
@@ -85,10 +130,10 @@ impl Tool for ArbitrageTool {
             args.network,
             args.token_address
         );
-        
+
         let response: GeckoResponse<Vec<Pool>> = self.client.get(&path).await?;
         let min_diff = args.min_difference_percentage.unwrap_or(1.0);
-        
+
         let mut opportunities = Vec::new();
         let pools = response.data;
 
@@ -107,13 +152,13 @@ impl Tool for ArbitrageTool {
                     let price2: f64 = price2_str.parse().map_err(|_| {
                         GeckoError::InvalidPoolData("Invalid price format".into())
                     })?;
-                    
+
                     let diff_percentage = ((price1 - price2).abs() / price1) * 100.0;
-                    
+
                     if diff_percentage > min_diff {
                         // Calculate potential profit percentage (accounting for typical DEX fees)
                         let potential_profit = diff_percentage - 0.6; // Assuming 0.3% fee per trade
-                        
+
                         opportunities.push(ArbitrageOpportunity {
                             pool1_name: pool1.name.clone(),
                             pool1_address: pool1.address.clone(),
@@ -129,6 +174,14 @@ impl Tool for ArbitrageTool {
             }
         }
 
-        Ok(opportunities)
+        // Filter to return only the top 3 opportunities
+        let top_opportunities = self.find_top_arbitrage_opportunities(opportunities);
+
+        // Print the formatted table
+        println!("========================== Arbitrage Opportunities ===========================");
+        println!("{}", self.format_as_table(top_opportunities.clone()));
+        println!("===========================================================================");
+
+        Ok(top_opportunities)
     }
 }
